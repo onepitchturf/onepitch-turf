@@ -54,6 +54,18 @@ export function formatCourtText(courtId: CourtId): string {
   return court.subtitle ? `${court.name} — ${court.subtitle}` : court.name;
 }
 
+export function getOwnerCourtName(courtId: CourtId): string {
+  if (courtId === "F") return "Full turf";
+  const court = COURTS[courtId];
+  return court ? court.name : courtId;
+}
+
+export function formatPhoneWithPlus(phone: string): string {
+  const digits = formatToE164(phone);
+  if (!digits) return phone.startsWith("+") ? phone : `+${phone}`;
+  return `+${digits}`;
+}
+
 export function formatDateDisplay(dateStr: string): string {
   const date = new Date(`${dateStr}T00:00:00`);
   return Number.isNaN(date.getTime())
@@ -81,21 +93,119 @@ export function formatTemplateDate(dateStr: string): string {
   }
 }
 
+export function formatOwnerDate(dateStr: string): string {
+  try {
+    const [year, month, day] = dateStr.split("-").map(Number);
+    const date = new Date(year, month - 1, day);
+    const weekday = date.toLocaleDateString("en-US", { weekday: "short" });
+    const monthShort = date.toLocaleDateString("en-US", { month: "short" });
+    const formattedMonth = monthShort === "Sep" ? "Sept" : monthShort;
+    return `${weekday}, ${day} ${formattedMonth}, ${year}`;
+  } catch {
+    return dateStr;
+  }
+}
+
 /**
- * Builds the 11 template body parameters required for Meta's approved
- * `onepitch_booking_confirmed` WhatsApp template:
+ * Builds the 13 body parameters for Meta's `turf_booking_owner_notify` WhatsApp template:
+ *
+ *  {{1}} Customer Name       e.g. "Mohamed Arief"
+ *  {{2}} Customer Phone      e.g. "+919688689556"
+ *  {{3}} Booking Ref         e.g. "TRF-985BBE38"
+ *  {{4}} Court Name          e.g. "Full turf"
+ *  {{5}} Formatted Date      e.g. "Sat, 19 Sept, 2026"
+ *  {{6}} Time Slot           e.g. "09:00 PM - 11:00 PM"
+ *  {{7}} Sport               e.g. "Cricket"
+ *  {{8}} Team Name           e.g. "Not provided"
+ *  {{9}} Paid Amount         e.g. "300"
+ *  {{10}} Payment Status     e.g. "Advance via UPI"
+ *  {{11}} Payment ID         e.g. "pay_Tdo4ZD9HYAuJPA"
+ *  {{12}} Order ID           e.g. "order_Tdo4QUBFNj0BoX"
+ *  {{13}} Balance Due        e.g. "700"
+ */
+export function buildOwnerTemplateParams(booking: BookingRecord): string[] {
+  const customerName =
+    (booking.customerName || "Customer").trim() || "Customer";
+  const customerPhone = formatPhoneWithPlus(booking.customerPhone);
+  const bookingRef = booking.bookingRef || "TRF-PENDING";
+  const courtName = getOwnerCourtName(booking.courtId);
+  const dateText = formatOwnerDate(booking.date);
+  const timeText =
+    booking.startTime && booking.endTime
+      ? `${booking.startTime} - ${booking.endTime}`
+      : "Scheduled Time";
+  const sportText = booking.sportType?.trim() || "Cricket";
+  const teamText = booking.teamName?.trim() || "Not provided";
+  const advanceText = String(booking.priceTotal ?? 0);
+  const paymentMethodText =
+    booking.paymentType === "ADVANCE" ? "Advance via UPI" : "Paid via UPI";
+  const paymentIdText = booking.paymentId || "Not available";
+  const orderIdText = booking.orderId || "Not available";
+  const balanceText = String(booking.balanceDue ?? 0);
+
+  return [
+    customerName,
+    customerPhone,
+    bookingRef,
+    courtName,
+    dateText,
+    timeText,
+    sportText,
+    teamText,
+    advanceText,
+    paymentMethodText,
+    paymentIdText,
+    orderIdText,
+    balanceText,
+  ];
+}
+
+/**
+ * Builds the 10 body parameters for Meta's `turf_booking_customer_notify` WhatsApp template:
  *
  *  {{1}} Customer Name       e.g. "Mohamed Arief"
  *  {{2}} Booking Ref         e.g. "TRF-CF92BF08"
- *  {{3}} Venue Name & City   e.g. "OnePitch Turf, Perambalur"
- *  {{4}} Court Name & Sub    e.g. "Full Turf — Entire Turf (C1 + C2)"
- *  {{5}} Sport Type          e.g. "Football"
- *  {{6}} Formatted Date      e.g. "Sunday, September 6, 2026"
- *  {{7}} Time Range          e.g. "10:00 PM – 01:00 AM"
- *  {{8}} Duration            e.g. "3 Hours"
- *  {{9}} Price Total         e.g. "4,500"
- *  {{10}} Payment Method     e.g. "UPI"
- *  {{11}} Payment ID         e.g. "pay_TYLQbdRcsePvPN"
+ *  {{3}} Court & Subtitle    e.g. "Full Turf — Entire Turf (C1 + C2)"
+ *  {{4}} Sport               e.g. "Football"
+ *  {{5}} Formatted Date      e.g. "Sunday, September 6, 2026"
+ *  {{6}} Time Slot           e.g. "10:00 PM – 01:00 AM"
+ *  {{7}} Paid Amount         e.g. "300"
+ *  {{8}} Payment ID          e.g. "pay_TYLQbdRcsePvPN"
+ *  {{9}} Payment Type        e.g. "Advance"
+ *  {{10}} Balance Due        e.g. "700"
+ */
+export function buildCustomerTemplateParams(booking: BookingRecord): string[] {
+  const customerName =
+    (booking.customerName || "Customer").trim() || "Customer";
+  const bookingRef = booking.bookingRef || "TRF-CF92BF08";
+  const courtText = formatCourtText(booking.courtId) || "OnePitch Turf";
+  const sportText = booking.sportType?.trim() || "Football";
+  const dateText = formatTemplateDate(booking.date) || "Scheduled Date";
+  const timeText =
+    booking.startTime && booking.endTime
+      ? `${booking.startTime} – ${booking.endTime}`
+      : "Scheduled Time";
+  const advanceText = String(booking.priceTotal ?? 0);
+  const paymentIdText = booking.paymentId || "PAID";
+  const paymentTypeText = booking.paymentType === "ADVANCE" ? "Advance" : "Paid";
+  const balanceText = String(booking.balanceDue ?? 0);
+
+  return [
+    customerName,
+    bookingRef,
+    courtText,
+    sportText,
+    dateText,
+    timeText,
+    advanceText,
+    paymentIdText,
+    paymentTypeText,
+    balanceText,
+  ];
+}
+
+/**
+ * Legacy builder for Meta's approved 11-parameter `turf_slot_booking_alert` template:
  */
 export function buildBookingConfirmedTemplateParams(
   booking: BookingRecord,
@@ -130,6 +240,7 @@ export function buildBookingConfirmedTemplateParams(
 
 export function generateCustomerTicketMessage(booking: BookingRecord): string {
   const duration = `${booking.durationHours} ${booking.durationHours === 1 ? "hour" : "hours"}`;
+  const isAdvance = booking.paymentType === "ADVANCE";
   return [
     "ONEPITCH TURF - BOOKING CONFIRMED",
     `Hello ${booking.customerName}, your booking is confirmed.`,
@@ -139,7 +250,10 @@ export function generateCustomerTicketMessage(booking: BookingRecord): string {
     `Time: ${booking.startTime} - ${booking.endTime} (${duration})`,
     `Sport: ${booking.sportType || "Football"}`,
     booking.teamName ? `Team: ${booking.teamName}` : "",
-    `Amount paid: Rs. ${Number(booking.priceTotal || 0).toLocaleString("en-IN")}`,
+    `${isAdvance ? "Advance paid" : "Amount paid"}: Rs. ${Number(booking.priceTotal || 0).toLocaleString("en-IN")}`,
+    booking.balanceDue && booking.balanceDue > 0
+      ? `Balance due: Rs. ${Number(booking.balanceDue).toLocaleString("en-IN")}`
+      : "",
     `Payment ID: ${booking.paymentId || "PAID"}`,
     "Venue: OnePitch Turf, Collector Office Road, Perambalur",
     `Location: ${VENUE_GPS_LINK}`,
@@ -150,6 +264,7 @@ export function generateCustomerTicketMessage(booking: BookingRecord): string {
 }
 
 export function generateOwnerAlertMessage(booking: BookingRecord): string {
+  const isAdvance = booking.paymentType === "ADVANCE";
   return [
     "*NEW ONEPITCH TURF BOOKING*",
     "",
@@ -161,16 +276,22 @@ export function generateOwnerAlertMessage(booking: BookingRecord): string {
     "",
     "*BOOKING DETAILS*",
     `*Court:* ${formatCourtText(booking.courtId)}`,
-    `*Date:* ${formatTemplateDate(booking.date)}`,
+    `*Date:* ${formatOwnerDate(booking.date)}`,
     `*Time:* ${booking.startTime} - ${booking.endTime}`,
-    `*Sport:* ${booking.sportType || "Football"}`,
+    `*Sport:* ${booking.sportType || "Cricket"}`,
     `*Team:* ${booking.teamName || "Not provided"}`,
     "",
     "*PAYMENT DETAILS*",
-    `*Amount:* Rs. ${Number(booking.priceTotal || 0).toLocaleString("en-IN")}`,
+    `*${isAdvance ? "Advance Paid" : "Amount"}:* Rs. ${Number(booking.priceTotal || 0).toLocaleString("en-IN")}`,
+    booking.balanceDue && booking.balanceDue > 0
+      ? `*Balance Due:* Rs. ${Number(booking.balanceDue).toLocaleString("en-IN")}`
+      : "",
+    `*Payment Status:* ${isAdvance ? "Advance via UPI" : "Paid via UPI"}`,
     `*Payment ID:* ${booking.paymentId || "Not available"}`,
     `*Order ID:* ${booking.orderId || "Not available"}`,
-  ].join("\n");
+  ]
+    .filter(Boolean)
+    .join("\n");
 }
 
 export function getCustomerWhatsAppUrl(booking: BookingRecord): string {
@@ -280,14 +401,25 @@ export async function sendDualWhatsAppNotifications(
     // Check Cloud API credentials
     if (token && phoneNumberId) {
       const apiVersion = process.env.WHATSAPP_API_VERSION || "v21.0";
-      const lang = process.env.WHATSAPP_TEMPLATE_LANG || "en_US";
+      const lang = process.env.WHATSAPP_TEMPLATE_LANG || "en";
       const customerTemplate =
-        process.env.WHATSAPP_TEMPLATE_CUSTOMER || "turf_slot_booking_alert";
+        process.env.WHATSAPP_TEMPLATE_CUSTOMER ||
+        "turf_booking_customer_notify";
       const ownerTemplate =
-        process.env.WHATSAPP_TEMPLATE_OWNER || customerTemplate;
+        process.env.WHATSAPP_TEMPLATE_OWNER || "turf_booking_owner_notify";
 
       const endpoint = `https://graph.facebook.com/${apiVersion}/${phoneNumberId}/messages`;
-      const templateParams = buildBookingConfirmedTemplateParams(booking);
+      const customerParams =
+        customerTemplate === "turf_booking_customer_notify"
+          ? buildCustomerTemplateParams(booking)
+          : buildBookingConfirmedTemplateParams(booking);
+
+      const ownerParams =
+        ownerTemplate === "turf_booking_owner_notify"
+          ? buildOwnerTemplateParams(booking)
+          : ownerTemplate === "turf_booking_customer_notify"
+            ? buildCustomerTemplateParams(booking)
+            : buildBookingConfirmedTemplateParams(booking);
 
       const customerPhone = formatToE164(booking.customerPhone);
       const ownerPhone = formatToE164(OWNER_WHATSAPP_NUMBER);
@@ -305,7 +437,7 @@ export async function sendDualWhatsAppNotifications(
             to: customerPhone,
             templateName: customerTemplate,
             lang,
-            parameters: templateParams,
+            parameters: customerParams,
           }),
         );
       }
@@ -319,7 +451,7 @@ export async function sendDualWhatsAppNotifications(
             to: ownerPhone,
             templateName: ownerTemplate,
             lang,
-            parameters: templateParams,
+            parameters: ownerParams,
           }),
         );
       }
