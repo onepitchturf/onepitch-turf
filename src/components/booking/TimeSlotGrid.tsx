@@ -1,7 +1,7 @@
 "use client";
 
 import React from "react";
-import { CalculatedSlot, SlotPeriod } from "@/lib/bookingStore";
+import { CalculatedSlot, SlotPeriod, PaymentType } from "@/lib/bookingStore";
 
 interface TimeSlotGridProps {
   slots: CalculatedSlot[];
@@ -9,6 +9,7 @@ interface TimeSlotGridProps {
   onToggleSlot: (slotId: string) => void;
   isLoading?: boolean;
   warning?: string | null;
+  paymentType?: PaymentType;
 }
 
 export default function TimeSlotGrid({
@@ -17,6 +18,7 @@ export default function TimeSlotGrid({
   onToggleSlot,
   isLoading = false,
   warning = null,
+  paymentType = "FULL",
 }: TimeSlotGridProps) {
   const periods: Array<{
     id: SlotPeriod;
@@ -55,7 +57,7 @@ export default function TimeSlotGrid({
       <div className="section-title-row">
         <div>
           {/* <span className="eyebrow">Step 3</span> */}
-          <h2 className="step-title">Select Available Time Slot</h2>
+          {/* <h2 className="step-title">Select Available Time Slot</h2> */}
         </div>
         {/* <p className="step-desc">
           Click to select one or multiple consecutive hours. Real-time
@@ -92,7 +94,7 @@ export default function TimeSlotGrid({
       {isLoading ? (
         <div className="slots-loading-state">
           <div className="loading-spinner"></div>
-          <p>Retrieving real-time court availability...</p>
+          {/* <p>Loading</p> */}
         </div>
       ) : (
         <div className="periods-container">
@@ -173,7 +175,10 @@ export default function TimeSlotGrid({
                             </span>
                           ) : (
                             <span className="status-label avail-txt">
-                              ₹{slot.price}
+                              ₹
+                              {paymentType === "ADVANCE"
+                                ? slot.advancePrice
+                                : slot.price}
                             </span>
                           )}
                         </div>

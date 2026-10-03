@@ -1,10 +1,12 @@
 import { NextRequest, NextResponse } from "next/server";
 import Razorpay from "razorpay";
+import { CourtId, PaymentType } from "@/lib/bookingStore";
 import {
-  CourtId,
-  COURTS,
-} from "@/lib/bookingStore";
-import { attachOrderToBooking, getAvailability, holdBooking } from "@/lib/bookingService";
+  attachOrderToBooking,
+  getAvailability,
+  getSlotDetails,
+  holdBooking,
+} from "@/lib/bookingService";
 
 export const runtime = "nodejs";
 
@@ -22,32 +24,59 @@ export async function POST(request: NextRequest) {
       customerName,
       customerPhone,
       customerEmail,
+      paymentType = "FULL",
     } = body;
 
-    if (!isCourtId(courtId) || typeof date !== "string" || !Array.isArray(slotIds) || slotIds.length === 0) {
+    const activePaymentType: PaymentType =
+      paymentType === "ADVANCE" ? "ADVANCE" : "FULL";
+
+    if (
+      !isCourtId(courtId) ||
+      typeof date !== "string" ||
+      !Array.isArray(slotIds) ||
+      slotIds.length === 0
+    ) {
       return NextResponse.json(
         { success: false, error: "Missing court, date, or time slots." },
-        { status: 400 }
+        { status: 400 },
       );
     }
 
-    if (typeof customerName !== "string" || typeof customerPhone !== "string" || !customerName.trim() || customerPhone.replace(/\D/g, "").length < 10) {
+    if (
+      typeof customerName !== "string" ||
+      typeof customerPhone !== "string" ||
+      !customerName.trim() ||
+      customerPhone.replace(/\D/g, "").length < 10
+    ) {
       return NextResponse.json(
-        { success: false, error: "Please enter player name and mobile number." },
-        { status: 400 }
+        {
+          success: false,
+          error: "Please enter player name and mobile number.",
+        },
+        { status: 400 },
       );
     }
 
-    const keyId = process.env.NEXT_PUBLIC_RAZORPAY_KEY_ID || process.env.RAZORPAY_KEY_ID;
+    const keyId =
+      process.env.NEXT_PUBLIC_RAZORPAY_KEY_ID || process.env.RAZORPAY_KEY_ID;
     const keySecret = process.env.RAZORPAY_KEY_SECRET;
-    if (!keyId || !keySecret || keyId.includes("your_key") || keySecret.includes("your_razorpay")) {
+    if (
+      !keyId ||
+      !keySecret ||
+      keyId.includes("your_key") ||
+      keySecret.includes("your_razorpay")
+    ) {
       return NextResponse.json(
-        { success: false, error: "Razorpay is not configured. Add valid Razorpay API keys to .env.local." },
-        { status: 503 }
+        {
+          success: false,
+          error:
+            "Razorpay is not configured. Add valid Razorpay API keys to .env.local.",
+        },
+        { status: 503 },
       );
     }
 
-    // 1. Verify real-time availability before creating order
+    // 1. Verify availability
     const availability = await getAvailability(courtId, date);
     for (const slotId of slotIds) {
       const slot = availability.find((s) => s.id === slotId);
@@ -57,18 +86,17 @@ export async function POST(request: NextRequest) {
             success: false,
             error: `Slot ${slot?.label || slotId} is no longer available (${slot?.conflictReason || "Conflict"}).`,
           },
-          { status: 409 }
+          { status: 409 },
         );
       }
     }
 
-    // 2. Calculate exact total price in INR
-    const court = COURTS[courtId];
-    const duration = slotIds.length;
-    const amountInRupees = court.pricePerHour * duration;
+    // 2. Dynamic Price Calculation
+    const details = await getSlotDetails(courtId, slotIds, activePaymentType);
+    const amountInRupees = details.totalToPay;
     const amountInPaise = amountInRupees * 100;
 
-    // 3. Place temporary hold on slots during checkout
+    // 3. Place hold
     const holdResult = await holdBooking({
       courtId,
       date,
@@ -76,16 +104,17 @@ export async function POST(request: NextRequest) {
       customerName,
       customerPhone,
       customerEmail: customerEmail || "",
+      paymentType: activePaymentType,
     });
 
     if (!holdResult.success) {
       return NextResponse.json(
         { success: false, error: holdResult.error },
-        { status: 409 }
+        { status: 409 },
       );
     }
 
-    // 4. Initialize Razorpay Order
+    // 4. Create Razorpay Order
     const razorpay = new Razorpay({ key_id: keyId, key_secret: keySecret });
     const order = await razorpay.orders.create({
       amount: amountInPaise,
@@ -94,15 +123,22 @@ export async function POST(request: NextRequest) {
       notes: {
         courtId,
         date,
-        slotCount: String(duration),
+        slotCount: String(slotIds.length),
+        paymentType: activePaymentType,
         turfName: "OnePitch Arena",
       },
     });
 
-    if (!holdResult.holdToken || !(await attachOrderToBooking(holdResult.holdToken, order.id))) {
+    if (
+      !holdResult.holdToken ||
+      !(await attachOrderToBooking(holdResult.holdToken, order.id))
+    ) {
       return NextResponse.json(
-        { success: false, error: "Your checkout hold expired. Please select the slots again." },
-        { status: 409 }
+        {
+          success: false,
+          error: "Your checkout hold expired. Please select the slots again.",
+        },
+        { status: 409 },
       );
     }
 
@@ -117,7 +153,6 @@ export async function POST(request: NextRequest) {
       customer: {
         name: customerName,
         phone: customerPhone,
-        // Do not invent or reuse an email address for Razorpay.
         ...(typeof customerEmail === "string" && customerEmail.trim()
           ? { email: customerEmail.trim() }
           : {}),
@@ -127,7 +162,7 @@ export async function POST(request: NextRequest) {
     console.error("Razorpay create-order error:", error);
     return NextResponse.json(
       { success: false, error: "Failed to initiate UPI payment order." },
-      { status: 500 }
+      { status: 500 },
     );
   }
 }

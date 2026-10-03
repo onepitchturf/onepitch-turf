@@ -1,156 +1,155 @@
 "use client";
 
 import React from "react";
-import { CourtId, COURTS, CalculatedSlot } from "@/lib/bookingStore";
+import {
+  CourtId,
+  COURTS,
+  CalculatedSlot,
+  PaymentType,
+  calcTotals,
+} from "@/lib/bookingStore";
 
 interface BookingSummaryProps {
   selectedCourt: CourtId;
   selectedDate: string; // YYYY-MM-DD
   selectedSlots: CalculatedSlot[];
-  onProceedToReview: () => void;
+  paymentType: PaymentType;
 }
+
+const inr = (n: number) => `₹${n.toLocaleString("en-IN")}`;
 
 export default function BookingSummary({
   selectedCourt,
   selectedDate,
   selectedSlots,
-  onProceedToReview,
+  paymentType,
 }: BookingSummaryProps) {
   const court = COURTS[selectedCourt];
-  const hasSelected = selectedSlots.length > 0;
+  const slots = [...selectedSlots].sort((a, b) => a.startHour - b.startHour);
+  const hasSelected = slots.length > 0;
+  const duration = slots.length;
+  const isAdvance = paymentType === "ADVANCE";
 
-  // Format date display
-  const dateObj = new Date(selectedDate + "T00:00:00");
-  const formattedDate = dateObj.toLocaleDateString("en-US", {
-    weekday: "long",
-    day: "numeric",
-    month: "long",
-    year: "numeric",
-  });
+  const { full, payNow, balanceDue } = calcTotals(slots, paymentType);
+  const ratePerHour = duration ? Math.round(full / duration) : 0;
 
-  const durationHours = selectedSlots.length;
-  const basePrice = court.pricePerHour * durationHours;
-  const additionalCharges = 0;
-  const totalPrice = basePrice + additionalCharges;
-
-  // Sort slots by start hour for clean time display
-  const sortedSlots = [...selectedSlots].sort(
-    (a, b) => a.startHour - b.startHour,
+  const formattedDate = new Date(`${selectedDate}T00:00:00`).toLocaleDateString(
+    "en-IN",
+    { weekday: "long", day: "numeric", month: "long", year: "numeric" },
   );
-  const startTime = sortedSlots[0]?.startTime || "—";
-  const endTime = sortedSlots[sortedSlots.length - 1]?.endTime || "—";
-  const timeRangeDisplay = hasSelected
-    ? `${startTime} – ${endTime}`
-    : "No slot selected";
+
+  const timeRange = hasSelected
+    ? `${slots[0].startTime} – ${slots[slots.length - 1].endTime}`
+    : "—";
 
   return (
-    <div className="booking-summary-card">
-      <div className="section-title-row">
-        <div>
-          <span className="eyebrow">Step 4</span>
-          <h2 className="step-title">Booking Summary &amp; Total</h2>
+    <div className="bs-card">
+      {/* Header */}
+      <div className="bs-header">
+        <div className="bs-court-chip">
+          {selectedCourt === "F" ? "FULL" : selectedCourt}
         </div>
-        <p className="step-desc">
-          Review your court, time duration, and proceed to lock your booking.
-        </p>
-      </div>
-
-      <div className="summary-turf-preview">
-        <div className="preview-img-container">
-          <img src="/images/turf-top-view.jpg" alt="Turf preview" />
-
-          <div className="preview-zone-tag">
-            {selectedCourt === "F" ? "FULL GROUND" : selectedCourt}
-          </div>
-        </div>
-
-        <div className="preview-details">
-          <h4>
-            OnePitch —{" "}
-            <span className="court-name-highlight">{court.name}</span>
-          </h4>
-
-          <span className="preview-loc">
-            Abiramapuram, Perambalur • {court.capacity}
+        <div className="bs-header-text">
+          <span className="eyebrow">Booking Summary</span>
+          <h3 className="bs-title">{court.name}</h3>
+          <span className="bs-sub">
+            {court.subtitle} · {court.capacity}
           </span>
         </div>
+        <span className={`bs-mode-badge ${isAdvance ? "adv" : "full"}`}>
+          {isAdvance ? "ADVANCE" : "FULL PAYMENT"}
+        </span>
       </div>
 
-      <div className="summary-details-list">
-        <div className="summary-row">
-          <span className="row-label">Selected Court</span>
-          <span className="row-val font-highlight">
-            {court.name} <small>({court.subtitle})</small>
-          </span>
+      {/* Match details */}
+      <div className="bs-grid">
+        <div className="bs-item">
+          <span className="bs-label">Date</span>
+          <span className="bs-value">{formattedDate}</span>
         </div>
-
-        <div className="summary-row">
-          <span className="row-label">Selected Date</span>
-          <span className="row-val">{formattedDate}</span>
+        <div className="bs-item">
+          <span className="bs-label">Time</span>
+          <span className="bs-value">{timeRange}</span>
         </div>
-
-        <div className="summary-row">
-          <span className="row-label">Match Time</span>
-          <span className="row-val">{timeRangeDisplay}</span>
-        </div>
-
-        <div className="summary-row">
-          <span className="row-label">Total Duration</span>
-          <span className="row-val">
+        <div className="bs-item">
+          <span className="bs-label">Duration</span>
+          <span className="bs-value">
             {hasSelected
-              ? `${durationHours} ${durationHours === 1 ? "Hour" : "Hours"}`
+              ? `${duration} ${duration === 1 ? "Hour" : "Hours"}`
               : "—"}
           </span>
         </div>
-
-        <div className="summary-divider"></div>
-
-        <div className="summary-row">
-          <span className="row-label">Hourly Rate</span>
-          <span className="row-val">
-            ₹{court.pricePerHour.toLocaleString()} / hr
-          </span>
-        </div>
-
-        <div className="summary-row">
-          <span className="row-label">Slot Subtotal</span>
-          <span className="row-val">₹{basePrice.toLocaleString()}</span>
-        </div>
-
-        <div className="summary-row">
-          <span className="row-label">Floodlight &amp; Maintenance Fee</span>
-          <span className="row-val text-green">FREE (₹0)</span>
-        </div>
-
-        <div className="summary-total-row">
-          <div className="total-label-box">
-            <span className="total-title">Total Payable</span>
-            <span className="total-sub">
-              Inc. all amenities &amp; floodlights
-            </span>
-          </div>
-          <div className="total-amount-box">
-            <span className="total-amount">₹{totalPrice.toLocaleString()}</span>
-          </div>
+        <div className="bs-item">
+          <span className="bs-label">Venue</span>
+          <span className="bs-value">OnePitch, Perambalur</span>
         </div>
       </div>
 
-      {/* <div className="summary-action-box">
-        <button
-          type="button"
-          className={`btn btn-primary summary-cta-btn ${!hasSelected ? "btn-disabled" : ""}`}
-          disabled={!hasSelected}
-          onClick={onProceedToReview}
-        >
-          {hasSelected
-            ? "Continue to Booking Review"
-            : "Select an Available Slot Above to Continue"}
-        </button>
+      {/* Slot chips */}
+      <div className="bs-section">
+        <span className="bs-label">Selected slots</span>
+        {hasSelected ? (
+          <div className="bs-chips">
+            {slots.map((s) => (
+              <span key={s.id} className="bs-chip">
+                {s.startTime} – {s.endTime}
+              </span>
+            ))}
+          </div>
+        ) : (
+          <p className="bs-empty">
+            No slot selected yet. Go back and pick at least one hour.
+          </p>
+        )}
+      </div>
 
-        <p className="summary-guarantee-note">
-          🔒 Real-time slot locking • Zero double-booking guarantee
-        </p>
-      </div> */}
+      {/* Price breakdown */}
+      <div className="bs-section">
+        <span className="bs-label">Price breakdown</span>
+        <div className="bs-rows">
+          <div className="bs-row">
+            <span>Rate per hour</span>
+            <span>{hasSelected ? `${inr(ratePerHour)} / hr` : "—"}</span>
+          </div>
+          <div className="bs-row">
+            <span>
+              Slot total ({duration} × {inr(ratePerHour)})
+            </span>
+            <span>{inr(full)}</span>
+          </div>
+          <div className="bs-row">
+            <span>Floodlight &amp; maintenance</span>
+            <span className="bs-free">FREE</span>
+          </div>
+
+          {isAdvance && hasSelected && (
+            <>
+              <div className="bs-divider" />
+              <div className="bs-row">
+                <span>Advance payable now</span>
+                <span>{inr(payNow)}</span>
+              </div>
+              <div className="bs-row bs-row-due">
+                <span>Balance to pay at venue</span>
+                <span>{inr(balanceDue)}</span>
+              </div>
+            </>
+          )}
+        </div>
+      </div>
+
+      {/* Total */}
+      <div className="bs-total">
+        <div>
+          <span className="bs-total-title">Payable Now</span>
+          <span className="bs-total-sub">
+            {isAdvance
+              ? `Remaining ${inr(balanceDue)} due at the turf`
+              : "Inc. all amenities & floodlights"}
+          </span>
+        </div>
+        <span className="bs-total-amount">{inr(payNow)}</span>
+      </div>
     </div>
   );
 }

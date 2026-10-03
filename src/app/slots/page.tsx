@@ -10,9 +10,13 @@ import TimeSlotGrid from "@/components/booking/TimeSlotGrid";
 import BookingSummary from "@/components/booking/BookingSummary";
 import BookingModal from "@/components/booking/BookingModal";
 import BookingSuccess from "@/components/booking/BookingSuccess";
-import BookingBreadcrumb, { BookingStep } from "@/components/booking/BookingBreadcrumb";
+import BookingBreadcrumb, {
+  BookingStep,
+} from "@/components/booking/BookingBreadcrumb";
 import {
   CourtId,
+  CourtPricing,
+  PaymentType,
   CalculatedSlot,
   BookingRecord,
   formatISODate,
@@ -25,7 +29,17 @@ export default function BookingPage() {
 
   // ── Booking data state ──────────────────────────────────────────────────────
   const [selectedCourt, setSelectedCourt] = useState<CourtId>("C1");
+  const [paymentType, setPaymentType] = useState<PaymentType>("FULL");
+  const [pricing, setPricing] = useState<Record<CourtId, CourtPricing> | null>(
+    null,
+  );
 
+  useEffect(() => {
+    fetch("/api/pricing", { cache: "no-store" })
+      .then((r) => r.json())
+      .then((d) => d.success && setPricing(d.pricing))
+      .catch((e) => console.error("Failed to load pricing:", e));
+  }, []);
   const [selectedDate, setSelectedDate] = useState<string>(() =>
     formatISODate(new Date()),
   );
@@ -89,13 +103,6 @@ export default function BookingPage() {
 
   /**
    * Fetch authoritative availability from our backend API.
-   *
-   * silent = false:
-   * Shows loading state.
-   *
-   * silent = true:
-   * Refreshes availability in the background without
-   * making the slot grid flash into a loading state.
    */
   const fetchAvailability = useCallback(
     async (silent = false) => {
@@ -124,11 +131,6 @@ export default function BookingPage() {
 
           setSlots(latestSlots);
 
-          /**
-           * If another customer booked a slot while this user
-           * was looking at the page, remove that slot from
-           * the user's current selection.
-           */
           setSelectedSlotIds((prev) =>
             prev.filter((id) => {
               const match = latestSlots.find((slot) => slot.id === id);
@@ -156,31 +158,10 @@ export default function BookingPage() {
     [selectedCourt, selectedDate],
   );
 
-  /**
-   * Initial availability fetch.
-   *
-   * Runs whenever the selected court or selected date changes.
-   */
   useEffect(() => {
     fetchAvailability();
   }, [fetchAvailability]);
 
-  /**
-   * Keep availability synchronized while the booking page
-   * remains open.
-   *
-   * This is required because time passing does not create
-   * a Supabase realtime event.
-   *
-   * Example:
-   *
-   * 1:00 PM - 2:00 PM
-   *
-   * At 1:59 PM → slot is visible
-   * At 2:00 PM → refresh availability
-   *              → backend marks it EXPIRED
-   *              → TimeSlotGrid removes it
-   */
   useEffect(() => {
     const availabilityRefreshInterval = window.setInterval(() => {
       fetchAvailability(true);
@@ -191,23 +172,6 @@ export default function BookingPage() {
     };
   }, [fetchAvailability]);
 
-  /**
-   * Supabase Realtime
-   *
-   * Whenever the bookings table changes anywhere:
-   *
-   * Customer A books a slot
-   *        ↓
-   * Supabase bookings table changes
-   *        ↓
-   * Realtime event
-   *        ↓
-   * Customer B receives event
-   *        ↓
-   * Customer B fetches latest availability
-   *        ↓
-   * Slot UI updates
-   */
   useEffect(() => {
     console.log("Starting OnePitch realtime connection...");
 
@@ -240,45 +204,29 @@ export default function BookingPage() {
     };
   }, [fetchAvailability]);
 
-  /**
-   * Handle slot selection.
-   *
-   * Supports:
-   * - single slot
-   * - consecutive slots
-   */
   const handleToggleSlot = (slotId: string) => {
     setSelectedSlotIds((prev) => {
-      // Clicking an already-selected slot removes it.
       if (prev.includes(slotId)) {
         return prev.filter((id) => id !== slotId);
       }
 
       const clickedSlot = slots.find((slot) => slot.id === slotId);
 
-      // Do not allow unavailable slots to be selected.
       if (!clickedSlot || clickedSlot.status !== "AVAILABLE") {
         return prev;
       }
 
-      // First selection.
       if (prev.length === 0) {
         return [slotId];
       }
 
-      // Get currently selected slots in chronological order.
       const currentlySelected = slots
         .filter((slot) => prev.includes(slot.id))
         .sort((a, b) => a.startHour - b.startHour);
 
       const minHour = currentlySelected[0].startHour;
-
       const maxHour = currentlySelected[currentlySelected.length - 1].endHour;
 
-      /**
-       * Only allow the new slot if it directly touches
-       * the currently selected range.
-       */
       if (
         clickedSlot.endHour === minHour ||
         clickedSlot.startHour === maxHour
@@ -286,47 +234,28 @@ export default function BookingPage() {
         return [...prev, slotId];
       }
 
-      // Otherwise start a new selection.
       return [slotId];
     });
   };
 
-  /**
-   * Change court.
-   * If the user is going back to Step 1 and changes court,
-   * clear slot selections and reset progress so they must re-pick in Step 2.
-   */
   const handleCourtChange = (court: CourtId) => {
     if (court !== selectedCourt) {
       setSelectedCourt(court);
       setSelectedSlotIds([]);
-      // Reset maxReachedStep so Step 2 & 3 breadcrumbs become non-clickable
-      // until the user has re-selected a slot
       setMaxReachedStep(1);
     }
   };
 
-  /**
-   * Change booking date.
-   */
   const handleDateChange = (date: string) => {
     setSelectedDate(date);
     setSelectedSlotIds([]);
   };
 
-  /**
-   * Booking completed successfully.
-   */
   const handleBookingSuccess = (booking: BookingRecord) => {
     setConfirmedBooking(booking);
-
-    // Refresh availability after successful booking.
     fetchAvailability();
   };
 
-  /**
-   * Customer wants to make another booking.
-   */
   const handleBookAnother = () => {
     setConfirmedBooking(null);
     setSelectedSlotIds([]);
@@ -337,14 +266,8 @@ export default function BookingPage() {
     fetchAvailability();
   };
 
-  /**
-   * Another customer already booked the selected slot
-   * while this customer was checking out.
-   */
   const handleAvailabilityConflict = (msg: string) => {
     setConflictAlert(msg);
-
-    // Immediately refresh availability.
     fetchAvailability();
 
     setTimeout(() => {
@@ -352,23 +275,18 @@ export default function BookingPage() {
     }, 5000);
   };
 
-  /**
-   * Convert selected slot IDs into full slot objects.
-   */
   const selectedSlotObjects = slots.filter((slot) =>
     selectedSlotIds.includes(slot.id),
   );
 
   const hasSlotSelected = selectedSlotIds.length > 0;
 
-  // ── Step Continue handler ───────────────────────────────────────────────────
   const handleContinue = () => {
     const next = (currentStep + 1) as BookingStep;
     if (next > 3) return;
     goToStep(next);
   };
 
-  // ── Breadcrumb step click ───────────────────────────────────────────────────
   const handleStepClick = (step: BookingStep) => {
     if (step <= maxReachedStep && step !== currentStep) {
       goToStep(step);
@@ -381,14 +299,12 @@ export default function BookingPage() {
 
       <main className="booking-page-main">
         <div className="wrap booking-container-wrap">
-          {/* Booking Page Hero Banner */}
           <div className="booking-page-header reveal">
             <h5 className="booking-main-title">
               RESERVE YOUR <em>MATCH SLOT</em>
             </h5>
           </div>
 
-          {/* General availability error */}
           {availabilityError && (
             <div
               className="global-conflict-toast"
@@ -401,7 +317,6 @@ export default function BookingPage() {
             </div>
           )}
 
-          {/* Booking conflict notification */}
           {conflictAlert && (
             <div
               className="global-conflict-toast"
@@ -424,7 +339,6 @@ export default function BookingPage() {
             </div>
           )}
 
-          {/* Main Booking Content or Success Screen */}
           {confirmedBooking ? (
             <BookingSuccess
               booking={confirmedBooking}
@@ -432,20 +346,17 @@ export default function BookingPage() {
             />
           ) : (
             <>
-              {/* ── Breadcrumb navigation ── */}
               <BookingBreadcrumb
                 currentStep={currentStep}
                 maxReachedStep={maxReachedStep}
                 onStepClick={handleStepClick}
               />
 
-              {/* ── Step screens ── */}
               <div className="booking-step-screen">
                 {/* STEP 1: Select Zone */}
                 {currentStep === 1 && (
                   <div className="step-content">
                     <div className="step-section-label">
-                      {/* <h2 className="step-screen-title">Select Your Zone</h2> */}
                       <p className="step-screen-desc">
                         Choose a court from the interactive pitch map below,
                         then continue.
@@ -462,7 +373,10 @@ export default function BookingPage() {
                     <div className="flow-step-card">
                       <CourtSelector
                         selectedCourt={selectedCourt}
-                        onSelectCourt={handleCourtChange}
+                        onSelectCourt={handleCourtChange} // was setSelectedCourt
+                        paymentType={paymentType}
+                        onPaymentTypeChange={setPaymentType}
+                        pricing={pricing}
                       />
                     </div>
 
@@ -484,8 +398,6 @@ export default function BookingPage() {
                 {currentStep === 2 && (
                   <div className="step-content">
                     <div className="step-section-label">
-                      {/* <span className="eyebrow">Step 2 of 3</span> */}
-                      {/* <h2 className="step-screen-title">Booking Details</h2> */}
                       <p className="step-screen-desc">
                         Pick a date and select your preferred time slot(s).
                       </p>
@@ -505,6 +417,7 @@ export default function BookingPage() {
                         selectedSlotIds={selectedSlotIds}
                         onToggleSlot={handleToggleSlot}
                         isLoading={isLoading}
+                        paymentType={paymentType}
                       />
                     </div>
 
@@ -539,27 +452,28 @@ export default function BookingPage() {
                 {currentStep === 3 && (
                   <div className="step-content">
                     <div className="step-section-label">
-                      {/* <span className="eyebrow">Step 3 of 3</span> */}
-                      {/* <h2 className="step-screen-title">Review &amp; Pay</h2> */}
                       <p className="step-screen-desc">
                         Review your booking summary, enter your details, and
                         complete payment.
                       </p>
                     </div>
 
-                    {/* Read-only booking summary */}
                     <div className="flow-step-card">
+                      {/* <BookingSummary
+                        selectedCourt={selectedCourt}
+                        selectedDate={selectedDate}
+                        selectedSlots={selectedSlotObjects}
+                        paymentType={paymentType}
+                        onProceedToReview={() => {}}
+                      /> */}
                       <BookingSummary
                         selectedCourt={selectedCourt}
                         selectedDate={selectedDate}
                         selectedSlots={selectedSlotObjects}
-                        onProceedToReview={() => {
-                          /* no-op: we're already on Step 3 */
-                        }}
+                        paymentType={paymentType}
                       />
                     </div>
 
-                    {/* Inline checkout form (no modal backdrop) */}
                     <div className="flow-step-card">
                       <div className="inline-checkout-card">
                         <div className="inline-checkout-header">
@@ -574,10 +488,11 @@ export default function BookingPage() {
                         <BookingModal
                           isOpen={true}
                           inlineMode={true}
-                          onClose={() => goToStep(2)}
+                          onClose={() => goToStep(2)} // was missing; the Back button did nothing
                           selectedCourt={selectedCourt}
                           selectedDate={selectedDate}
                           selectedSlots={selectedSlotObjects}
+                          paymentType={paymentType}
                           onBookingSuccess={handleBookingSuccess}
                           onAvailabilityConflict={handleAvailabilityConflict}
                         />

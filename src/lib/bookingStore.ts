@@ -1,6 +1,23 @@
 // Shared booking types and fixed turf configuration. Booking availability and
 // records are read and written exclusively through Supabase in bookingService.
 export type CourtId = "C1" | "C2" | "F";
+export type PaymentType = "ADVANCE" | "FULL";
+
+export interface CourtInfo {
+  id: CourtId;
+  name: string;
+  subtitle: string;
+  description: string;
+  pricePerHour: number;
+  capacity: string;
+  sportTypes: string[];
+}
+
+export interface CourtPricing {
+  courtId: CourtId;
+  fullPricePerHour: number;
+  advancePricePerHour: number;
+}
 
 export interface CourtInfo {
   id: CourtId;
@@ -19,7 +36,7 @@ export const COURTS: Record<CourtId, CourtInfo> = {
     subtitle: "Left Half",
     description:
       "Perfect for 5v5 or 6v6. Pick your Sports football or cricket.",
-    pricePerHour: 200,
+    pricePerHour: 600,
     capacity: "5v5 / 6v6 (10-12 Players)",
     sportTypes: ["Football", "Cricket"],
   },
@@ -28,7 +45,7 @@ export const COURTS: Record<CourtId, CourtInfo> = {
     name: "Court 2",
     subtitle: "Right Half",
     description: "5v5 or 6v6, floodlit and ready. Bring the whole squad.",
-    pricePerHour: 200,
+    pricePerHour: 600,
     capacity: "5v5 / 6v6 (10-12 Players)",
     sportTypes: ["Football", "Cricket"],
   },
@@ -37,7 +54,7 @@ export const COURTS: Record<CourtId, CourtInfo> = {
     name: "Full Turf",
     subtitle: "Entire Turf (C1 + C2)",
     description: "Go big with 8v8 or 11v11. Take over the full turf.",
-    pricePerHour: 500,
+    pricePerHour: 1000,
     capacity: "8v8 / 11v11 (16-22 Players)",
     sportTypes: ["Football", "Cricket"],
   },
@@ -63,6 +80,7 @@ export interface SlotDefinition {
 export interface CalculatedSlot extends SlotDefinition {
   status: SlotStatus;
   price: number;
+  advancePrice: number;
   bookedCourt?: CourtId;
   conflictReason?: string;
   bookedBy?: string;
@@ -89,6 +107,16 @@ export interface BookingRecord {
   orderId?: string;
   heldUntil?: number;
   createdAt: number;
+  paymentType?: PaymentType;
+  balanceDue?: number;
+}
+
+/** Single source of truth for totals. Slot prices come from the DB via /api/availability. */
+export function calcTotals(slots: CalculatedSlot[], paymentType: PaymentType) {
+  const full = slots.reduce((sum, s) => sum + s.price, 0);
+  const advance = slots.reduce((sum, s) => sum + s.advancePrice, 0);
+  const payNow = paymentType === "ADVANCE" ? advance : full;
+  return { full, advance, payNow, balanceDue: full - payNow };
 }
 
 const SLOT_CONFIGS: Array<

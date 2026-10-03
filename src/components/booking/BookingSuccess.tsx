@@ -3,11 +3,6 @@
 import React from "react";
 import { BookingRecord, COURTS } from "@/lib/bookingStore";
 import Link from "next/link";
-import {
-  getCustomerWhatsAppUrl,
-  getOwnerWhatsAppUrl,
-  OWNER_WHATSAPP_NUMBER,
-} from "@/lib/whatsappService";
 
 interface BookingSuccessProps {
   booking: BookingRecord;
@@ -25,13 +20,6 @@ export default function BookingSuccess({ booking, onBookAnother }: BookingSucces
     month: "long",
     year: "numeric",
   });
-
-  const customerWhatsAppUrl = getCustomerWhatsAppUrl(booking);
-  const ownerWhatsAppUrl = getOwnerWhatsAppUrl(booking);
-
-  const handlePrint = () => {
-    window.print();
-  };
 
   return (
     <div className="success-screen-wrapper">
@@ -106,7 +94,15 @@ export default function BookingSuccess({ booking, onBookAnother }: BookingSucces
             <span className="receipt-label">Total Amount</span>
             <span className="receipt-val total-price">
               ₹{booking.priceTotal.toLocaleString()}
-            </span>
+            </span>{" "}
+            {booking.balanceDue ? (
+              <div className="receipt-item total-paid-item">
+                <span className="receipt-label">Balance due</span>
+                <span className="receipt-val total-price">
+                  ₹{booking.balanceDue.toLocaleString()}
+                </span>
+              </div>
+            ) : null}
           </div>
         </div>
 
