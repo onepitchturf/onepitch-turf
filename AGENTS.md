@@ -5,7 +5,7 @@ Turf booking site: Next.js 15 (App Router) + React 19 + TypeScript (strict), Sup
 ## Commands
 - `npm run dev` / `npm run build` / `npm start`
 - `npm run lint` is `next lint` and is **broken** (eslint is not installed and there is no config) — do not rely on it. Typecheck instead: `npx tsc --noEmit`.
-- No tests exist; don't invent a test framework.
+- Module unit tests: `npm run test:whatsapp` validates customer and owner notification payloads against Meta's approved schema.
 
 ## Architecture / booking flow
 - UI (`BookingModal.tsx`) → `POST /api/razorpay/create-order` (re-checks availability, holds slots via RPC, creates Razorpay order) → Razorpay checkout → `POST /api/razorpay/verify-payment` (server-side HMAC signature check, confirms booking via RPC). `holdToken` ties the whole flow together.
