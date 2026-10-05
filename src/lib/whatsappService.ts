@@ -7,18 +7,27 @@ export const OWNER_WHATSAPP_NUMBER =
   process.env.NEXT_PUBLIC_OWNER_WHATSAPP ||
   "919952323211";
 
-export const VENUE_GPS_LINK =
-  process.env.NEXT_PUBLIC_VENUE_GPS_LINK ||
-  "https://maps.google.com/?q=11.2333,78.8833";
-
-export const DEFAULT_VENUE_NAME =
-  process.env.WHATSAPP_VENUE_NAME || "OnePitch Turf, Perambalur";
-
 export type WhatsAppNotificationResult = {
   success: boolean;
   customerSent: boolean;
   ownerSent: boolean;
   details: string;
+};
+
+export type WhatsAppTemplatePayload = {
+  messaging_product: "whatsapp";
+  to: string;
+  type: "template";
+  template: {
+    name: string;
+    language: { code: string };
+    components: [
+      {
+        type: "body";
+        parameters: Array<{ type: "text"; text: string }>;
+      },
+    ];
+  };
 };
 
 // Simple deduplication cache to prevent duplicate WhatsApp messages within 60s
@@ -42,31 +51,47 @@ function isRecentlyDispatched(ref: string): boolean {
   return false;
 }
 
-export function getCourtLabel(courtId: string): string {
-  if (courtId === "F") return "Full Ground (F)";
-  const court = COURTS[courtId as keyof typeof COURTS];
-  return court ? `${court.name} (${courtId})` : courtId;
-}
-
-export function formatCourtText(courtId: CourtId): string {
+/**
+ * Single court name formatter shared by both customer and owner templates:
+ * e.g. "Full Turf", "Court 1", "Court 2"
+ */
+export function formatCourtName(courtId: CourtId): string {
   const court = COURTS[courtId];
-  if (!court) return courtId;
-  return court.subtitle ? `${court.name} — ${court.subtitle}` : court.name;
+  return court ? court.name : "Full Turf";
 }
 
-export function formatDateDisplay(dateStr: string): string {
-  const date = new Date(`${dateStr}T00:00:00`);
-  return Number.isNaN(date.getTime())
-    ? dateStr
-    : date.toLocaleDateString("en-IN", {
-        weekday: "short",
-        day: "numeric",
-        month: "short",
-        year: "numeric",
-      });
+/**
+ * Formats Indian phone number with "+" for notification body text:
+ * e.g. "9688689556" -> "+919688689556"
+ */
+export function formatPhoneWithPlus(phone: string): string {
+  const digits = formatToE164(phone);
+  if (!digits) return phone.startsWith("+") ? phone : `+${phone}`;
+  return `+${digits}`;
 }
 
-export function formatTemplateDate(dateStr: string): string {
+/**
+ * Formats date for owner template:
+ * e.g. "2026-09-19" -> "Sat, 19 Sept, 2026"
+ */
+export function formatOwnerDate(dateStr: string): string {
+  try {
+    const [year, month, day] = dateStr.split("-").map(Number);
+    const date = new Date(year, month - 1, day);
+    const weekday = date.toLocaleDateString("en-US", { weekday: "short" });
+    const monthShort = date.toLocaleDateString("en-US", { month: "short" });
+    const formattedMonth = monthShort === "Sep" ? "Sept" : monthShort;
+    return `${weekday}, ${day} ${formattedMonth}, ${year}`;
+  } catch {
+    return dateStr;
+  }
+}
+
+/**
+ * Formats date for customer template:
+ * e.g. "2026-09-06" -> "Sunday, September 6, 2026"
+ */
+export function formatCustomerDate(dateStr: string): string {
   try {
     const [year, month, day] = dateStr.split("-").map(Number);
     const date = new Date(year, month - 1, day);
@@ -82,141 +107,150 @@ export function formatTemplateDate(dateStr: string): string {
 }
 
 /**
- * Builds the 11 template body parameters required for Meta's approved
- * `onepitch_booking_confirmed` WhatsApp template:
- *
- *  {{1}} Customer Name       e.g. "Mohamed Arief"
- *  {{2}} Booking Ref         e.g. "TRF-CF92BF08"
- *  {{3}} Venue Name & City   e.g. "OnePitch Turf, Perambalur"
- *  {{4}} Court Name & Sub    e.g. "Full Turf — Entire Turf (C1 + C2)"
- *  {{5}} Sport Type          e.g. "Football"
- *  {{6}} Formatted Date      e.g. "Sunday, September 6, 2026"
- *  {{7}} Time Range          e.g. "10:00 PM – 01:00 AM"
- *  {{8}} Duration            e.g. "3 Hours"
- *  {{9}} Price Total         e.g. "4,500"
- *  {{10}} Payment Method     e.g. "UPI"
- *  {{11}} Payment ID         e.g. "pay_TYLQbdRcsePvPN"
+ * Shared time range formatter for both customer and owner:
+ * e.g. "09:00 PM - 11:00 PM"
  */
-export function buildBookingConfirmedTemplateParams(
-  booking: BookingRecord,
-): string[] {
-  const courtText = formatCourtText(booking.courtId) || "OnePitch Turf";
-  const dateText = formatTemplateDate(booking.date) || "Scheduled Date";
-  const timeText =
-    booking.startTime && booking.endTime
-      ? `${booking.startTime} – ${booking.endTime}`
-      : "Scheduled Time";
-  const durationText = `${booking.durationHours || 1} ${Number(booking.durationHours) === 1 ? "Hour" : "Hours"}`;
-  const priceText = Number(booking.priceTotal || 0).toLocaleString("en-IN");
-  const sportText = booking.sportType || "Football";
-  const venueText = DEFAULT_VENUE_NAME || "OnePitch Turf, Perambalur";
-  const paymentMethodText = booking.paymentMethod || "UPI";
-  const paymentIdText = booking.paymentId || booking.orderId || "PAID";
-
-  return [
-    (booking.customerName || "Customer").trim() || "Customer", // {{1}} Mohamed Arief
-    booking.bookingRef || "TRF-PENDING", // {{2}} TRF-CF92BF08
-    venueText, // {{3}} OnePitch Turf, Perambalur
-    courtText, // {{4}} Full Turf — Entire Turf (C1 + C2)
-    sportText, // {{5}} Football
-    dateText, // {{6}} Sunday, September 6, 2026
-    timeText, // {{7}} 10:00 PM – 01:00 AM
-    durationText, // {{8}} 3 Hours
-    priceText, // {{9}} 4,500
-    paymentMethodText, // {{10}} UPI
-    paymentIdText, // {{11}} pay_TYLQbdRcsePvPN
-  ];
-}
-
-export function generateCustomerTicketMessage(booking: BookingRecord): string {
-  const duration = `${booking.durationHours} ${booking.durationHours === 1 ? "hour" : "hours"}`;
-  return [
-    "ONEPITCH TURF - BOOKING CONFIRMED",
-    `Hello ${booking.customerName}, your booking is confirmed.`,
-    `Booking ID: ${booking.bookingRef}`,
-    `Court: ${getCourtLabel(booking.courtId)}`,
-    `Date: ${formatDateDisplay(booking.date)}`,
-    `Time: ${booking.startTime} - ${booking.endTime} (${duration})`,
-    `Sport: ${booking.sportType || "Football"}`,
-    booking.teamName ? `Team: ${booking.teamName}` : "",
-    `Amount paid: Rs. ${Number(booking.priceTotal || 0).toLocaleString("en-IN")}`,
-    `Payment ID: ${booking.paymentId || "PAID"}`,
-    "Venue: OnePitch Turf, Collector Office Road, Perambalur",
-    `Location: ${VENUE_GPS_LINK}`,
-    "Please arrive 10 minutes before your slot. Thank you!",
-  ]
-    .filter(Boolean)
-    .join("\n");
-}
-
-export function generateOwnerAlertMessage(booking: BookingRecord): string {
-  return [
-    "*NEW ONEPITCH TURF BOOKING*",
-    "",
-    `*Booking ID:* ${booking.bookingRef}`,
-    "",
-    "*CUSTOMER DETAILS*",
-    `*Customer:* ${booking.customerName}`,
-    `*Phone:* +${formatToE164(booking.customerPhone)}`,
-    "",
-    "*BOOKING DETAILS*",
-    `*Court:* ${formatCourtText(booking.courtId)}`,
-    `*Date:* ${formatTemplateDate(booking.date)}`,
-    `*Time:* ${booking.startTime} - ${booking.endTime}`,
-    `*Sport:* ${booking.sportType || "Football"}`,
-    `*Team:* ${booking.teamName || "Not provided"}`,
-    "",
-    "*PAYMENT DETAILS*",
-    `*Amount:* Rs. ${Number(booking.priceTotal || 0).toLocaleString("en-IN")}`,
-    `*Payment ID:* ${booking.paymentId || "Not available"}`,
-    `*Order ID:* ${booking.orderId || "Not available"}`,
-  ].join("\n");
-}
-
-export function getCustomerWhatsAppUrl(booking: BookingRecord): string {
-  return `https://wa.me/${formatToE164(booking.customerPhone)}?text=${encodeURIComponent(generateCustomerTicketMessage(booking))}`;
-}
-
-export function getOwnerWhatsAppUrl(booking: BookingRecord): string {
-  return `https://wa.me/${formatToE164(OWNER_WHATSAPP_NUMBER)}?text=${encodeURIComponent(generateOwnerAlertMessage(booking))}`;
+export function formatTimeSlot(startTime?: string, endTime?: string): string {
+  return startTime && endTime ? `${startTime} - ${endTime}` : "Scheduled Time";
 }
 
 /**
- * Sends a WhatsApp Cloud API template message matching Meta's official API schema.
+ * Builds the 10-parameter body template payload for customer notification:
+ * Template: `turf_booking_customer_notify`
+ *
+ *  {{1}} Customer Name    e.g. "Mohamed Arief"
+ *  {{2}} Booking Ref      e.g. "TRF-CF92BF08"
+ *  {{3}} Court Name       e.g. "Full Turf"
+ *  {{4}} Sport            e.g. "Football"
+ *  {{5}} Formatted Date   e.g. "Sunday, September 6, 2026"
+ *  {{6}} Time Slot        e.g. "10:00 PM - 01:00 AM"
+ *  {{7}} Paid Amount      e.g. "300"
+ *  {{8}} Payment ID       e.g. "pay_TYLQbdRcsePvPN"
+ *  {{9}} Payment Type     e.g. "Advance" / "Paid"
+ *  {{10}} Balance Due     e.g. "700"
  */
-async function sendCloudTemplateMessage(params: {
-  endpoint: string;
-  token: string;
-  to: string;
-  templateName: string;
-  lang: string;
-  parameters: string[];
-}): Promise<void> {
-  const payload = {
+export function buildCustomerPayload(
+  booking: BookingRecord,
+  toPhone = booking.customerPhone,
+  templateName = process.env.WHATSAPP_TEMPLATE_CUSTOMER ||
+    "turf_booking_customer_notify",
+  lang = process.env.WHATSAPP_TEMPLATE_LANG || "en",
+): WhatsAppTemplatePayload {
+  const isAdvance = booking.paymentType === "ADVANCE";
+  const parameters = [
+    (booking.customerName || "Customer").trim() || "Customer", // {{1}}
+    booking.bookingRef || "TRF-CF92BF08", // {{2}}
+    formatCourtName(booking.courtId), // {{3}}
+    booking.sportType?.trim() || "Football", // {{4}}
+    formatCustomerDate(booking.date), // {{5}}
+    formatTimeSlot(booking.startTime, booking.endTime), // {{6}}
+    String(booking.priceTotal ?? 0), // {{7}}
+    booking.paymentId || "PAID", // {{8}}
+    isAdvance ? "Advance" : "Paid", // {{9}}
+    String(booking.balanceDue ?? 0), // {{10}}
+  ];
+
+  return {
     messaging_product: "whatsapp",
-    to: params.to,
+    to: formatToE164(toPhone),
     type: "template",
     template: {
-      name: params.templateName,
-      language: {
-        code: params.lang,
-      },
+      name: templateName,
+      language: { code: lang },
       components: [
         {
           type: "body",
-          parameters: params.parameters.map((text) => ({
-            type: "text",
-            text,
-          })),
+          parameters: parameters.map((text) => ({ type: "text", text })),
         },
       ],
     },
   };
+}
 
-  const response = await fetch(params.endpoint, {
+/**
+ * Builds the 13-parameter body template payload for owner notification:
+ * Template: `turf_booking_owner_notify`
+ *
+ *  {{1}} Customer Name    e.g. "Mohamed Arief"
+ *  {{2}} Customer Phone   e.g. "+919688689556"
+ *  {{3}} Booking Ref      e.g. "TRF-985BBE38"
+ *  {{4}} Court Name       e.g. "Full Turf"
+ *  {{5}} Formatted Date   e.g. "Sat, 19 Sept, 2026"
+ *  {{6}} Time Slot        e.g. "09:00 PM - 11:00 PM"
+ *  {{7}} Sport            e.g. "Cricket"
+ *  {{8}} Team Name        e.g. "Not provided"
+ *  {{9}} Paid Amount      e.g. "300"
+ *  {{10}} Payment Status  e.g. "Advance via UPI" / "Paid via UPI"
+ *  {{11}} Payment ID      e.g. "pay_Tdo4ZD9HYAuJPA"
+ *  {{12}} Order ID        e.g. "order_Tdo4QUBFNj0BoX"
+ *  {{13}} Balance Due     e.g. "700"
+ */
+export function buildOwnerPayload(
+  booking: BookingRecord,
+  toPhone = OWNER_WHATSAPP_NUMBER,
+  templateName = process.env.WHATSAPP_TEMPLATE_OWNER ||
+    "turf_booking_owner_notify",
+  lang = process.env.WHATSAPP_TEMPLATE_LANG || "en",
+): WhatsAppTemplatePayload {
+  const isAdvance = booking.paymentType === "ADVANCE";
+  const parameters = [
+    (booking.customerName || "Customer").trim() || "Customer", // {{1}}
+    formatPhoneWithPlus(booking.customerPhone), // {{2}}
+    booking.bookingRef || "TRF-PENDING", // {{3}}
+    formatCourtName(booking.courtId), // {{4}}
+    formatOwnerDate(booking.date), // {{5}}
+    formatTimeSlot(booking.startTime, booking.endTime), // {{6}}
+    booking.sportType?.trim() || "Cricket", // {{7}}
+    booking.teamName?.trim() || "Not provided", // {{8}}
+    String(booking.priceTotal ?? 0), // {{9}}
+    isAdvance ? "Advance via UPI" : "Paid via UPI", // {{10}}
+    booking.paymentId || "Not available", // {{11}}
+    booking.orderId || "Not available", // {{12}}
+    String(booking.balanceDue ?? 0), // {{13}}
+  ];
+
+  return {
+    messaging_product: "whatsapp",
+    to: formatToE164(toPhone),
+    type: "template",
+    template: {
+      name: templateName,
+      language: { code: lang },
+      components: [
+        {
+          type: "body",
+          parameters: parameters.map((text) => ({ type: "text", text })),
+        },
+      ],
+    },
+  };
+}
+
+/** Convenience getters returning parameter strings array */
+export function buildCustomerTemplateParams(booking: BookingRecord): string[] {
+  return buildCustomerPayload(booking).template.components[0].parameters.map(
+    (p) => p.text,
+  );
+}
+
+export function buildOwnerTemplateParams(booking: BookingRecord): string[] {
+  return buildOwnerPayload(booking).template.components[0].parameters.map(
+    (p) => p.text,
+  );
+}
+
+/**
+ * Sends a WhatsApp Cloud API template payload to Meta Graph API.
+ */
+async function sendCloudPayload(
+  endpoint: string,
+  token: string,
+  payload: WhatsAppTemplatePayload,
+): Promise<void> {
+  const response = await fetch(endpoint, {
     method: "POST",
     headers: {
-      Authorization: `Bearer ${params.token}`,
+      Authorization: `Bearer ${token}`,
       "Content-Type": "application/json",
     },
     body: JSON.stringify(payload),
@@ -224,7 +258,7 @@ async function sendCloudTemplateMessage(params: {
 
   const responseText = await response.text().catch(() => "");
   console.log(
-    `[WhatsApp Cloud API] Dispatched to ${params.to} (Status ${response.status}):`,
+    `[WhatsApp Cloud API] Dispatched to ${payload.to} (Status ${response.status}):`,
     responseText,
   );
 
@@ -233,29 +267,8 @@ async function sendCloudTemplateMessage(params: {
   }
 }
 
-async function sendGateway(to: string, body: string): Promise<void> {
-  const url = process.env.WHATSAPP_GATEWAY_URL;
-  const token = process.env.WHATSAPP_GATEWAY_TOKEN;
-  if (!url || !token) {
-    throw new Error(
-      "WhatsApp is not configured. Add Cloud API credentials or gateway credentials.",
-    );
-  }
-  const response = await fetch(url, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      Authorization: `Bearer ${token}`,
-    },
-    body: JSON.stringify({ to, body }),
-  });
-  if (!response.ok) {
-    throw new Error(`Gateway ${response.status}: ${await response.text()}`);
-  }
-}
-
 /**
- * Sends WhatsApp notification to customer and owner.
+ * Sends WhatsApp notifications to customer and owner.
  * Guaranteed to never throw so that payment and booking flows never fail.
  */
 export async function sendDualWhatsAppNotifications(
@@ -271,136 +284,72 @@ export async function sendDualWhatsAppNotifications(
       };
     }
 
+    console.log("booking", booking);
+
     const token =
       process.env.WHATSAPP_CLOUD_ACCESS_TOKEN || process.env.WHATSAPP_TOKEN;
     const phoneNumberId =
       process.env.WHATSAPP_CLOUD_PHONE_NUMBER_ID ||
       process.env.WHATSAPP_PHONE_NUMBER_ID;
 
-    // Check Cloud API credentials
-    if (token && phoneNumberId) {
-      const apiVersion = process.env.WHATSAPP_API_VERSION || "v21.0";
-      const lang = process.env.WHATSAPP_TEMPLATE_LANG || "en_US";
-      const customerTemplate =
-        process.env.WHATSAPP_TEMPLATE_CUSTOMER || "turf_slot_booking_alert";
-      const ownerTemplate =
-        process.env.WHATSAPP_TEMPLATE_OWNER || customerTemplate;
-
-      const endpoint = `https://graph.facebook.com/${apiVersion}/${phoneNumberId}/messages`;
-      const templateParams = buildBookingConfirmedTemplateParams(booking);
-
-      const customerPhone = formatToE164(booking.customerPhone);
-      const ownerPhone = formatToE164(OWNER_WHATSAPP_NUMBER);
-
-      const tasks: Promise<void>[] = [];
-      let customerTaskIndex = -1;
-      let ownerTaskIndex = -1;
-
-      if (customerPhone) {
-        customerTaskIndex = tasks.length;
-        tasks.push(
-          sendCloudTemplateMessage({
-            endpoint,
-            token,
-            to: customerPhone,
-            templateName: customerTemplate,
-            lang,
-            parameters: templateParams,
-          }),
-        );
-      }
-
-      if (ownerPhone) {
-        ownerTaskIndex = tasks.length;
-        tasks.push(
-          sendCloudTemplateMessage({
-            endpoint,
-            token,
-            to: ownerPhone,
-            templateName: ownerTemplate,
-            lang,
-            parameters: templateParams,
-          }),
-        );
-      }
-
-      const results = await Promise.allSettled(tasks);
-      const customerSent =
-        customerTaskIndex >= 0 &&
-        results[customerTaskIndex]?.status === "fulfilled";
-      const ownerSent =
-        ownerTaskIndex >= 0 && results[ownerTaskIndex]?.status === "fulfilled";
-
-      const errors: string[] = [];
-      results.forEach((res, i) => {
-        if (res.status === "rejected") {
-          const recipient = i === customerTaskIndex ? "customer" : "owner";
-          errors.push(`${recipient}: ${String(res.reason)}`);
-        }
-      });
-
-      if (errors.length) {
-        console.error(`[WhatsApp] ${booking.bookingRef}: ${errors.join("; ")}`);
-      }
-
-      return {
-        success: customerSent || ownerSent,
-        customerSent,
-        ownerSent,
-        details: errors.length
-          ? errors.join("; ")
-          : "Customer and owner WhatsApp notifications sent successfully via Cloud API.",
-      };
-    }
-
-    // Fallback: Custom Gateway
-    if (
-      process.env.WHATSAPP_GATEWAY_URL &&
-      process.env.WHATSAPP_GATEWAY_TOKEN
-    ) {
-      const attempts = await Promise.allSettled([
-        sendGateway(
-          formatToE164(booking.customerPhone),
-          generateCustomerTicketMessage(booking),
-        ),
-        sendGateway(
-          formatToE164(OWNER_WHATSAPP_NUMBER),
-          generateOwnerAlertMessage(booking),
-        ),
-      ]);
-
-      const customerSent = attempts[0].status === "fulfilled";
-      const ownerSent = attempts[1].status === "fulfilled";
-      const errors = attempts.flatMap((attempt, index) =>
-        attempt.status === "rejected"
-          ? [`${index === 0 ? "customer" : "owner"}: ${String(attempt.reason)}`]
-          : [],
+    if (!token || !phoneNumberId) {
+      console.warn(
+        "[WhatsApp] WhatsApp Cloud API credentials not configured. Skipping notifications.",
       );
-
-      if (errors.length) {
-        console.error(
-          `[WhatsApp Gateway] ${booking.bookingRef}: ${errors.join("; ")}`,
-        );
-      }
-
       return {
-        success: customerSent && ownerSent,
-        customerSent,
-        ownerSent,
-        details: errors.length
-          ? errors.join("; ")
-          : "Dispatched via WhatsApp Gateway.",
+        success: false,
+        customerSent: false,
+        ownerSent: false,
+        details: "WhatsApp Cloud API credentials not configured.",
       };
     }
 
-    console.warn(
-      "[WhatsApp] Neither WhatsApp Cloud API nor Gateway is configured. Skipping notifications.",
-    );
+    const apiVersion = process.env.WHATSAPP_API_VERSION || "v21.0";
+    const endpoint = `https://graph.facebook.com/${apiVersion}/${phoneNumberId}/messages`;
+
+    const customerPayload = buildCustomerPayload(booking);
+    const ownerPayload = buildOwnerPayload(booking);
+
+    const tasks: Promise<void>[] = [];
+    let customerTaskIndex = -1;
+    let ownerTaskIndex = -1;
+
+    if (customerPayload.to) {
+      customerTaskIndex = tasks.length;
+      tasks.push(sendCloudPayload(endpoint, token, customerPayload));
+    }
+
+    if (ownerPayload.to) {
+      ownerTaskIndex = tasks.length;
+      tasks.push(sendCloudPayload(endpoint, token, ownerPayload));
+    }
+
+    const results = await Promise.allSettled(tasks);
+    const customerSent =
+      customerTaskIndex >= 0 &&
+      results[customerTaskIndex]?.status === "fulfilled";
+    const ownerSent =
+      ownerTaskIndex >= 0 && results[ownerTaskIndex]?.status === "fulfilled";
+
+    const errors: string[] = [];
+    results.forEach((res, i) => {
+      if (res.status === "rejected") {
+        const recipient = i === customerTaskIndex ? "customer" : "owner";
+        errors.push(`${recipient}: ${String(res.reason)}`);
+      }
+    });
+
+    if (errors.length) {
+      console.error(`[WhatsApp] ${booking.bookingRef}: ${errors.join("; ")}`);
+    }
+
     return {
-      success: false,
-      customerSent: false,
-      ownerSent: false,
-      details: "WhatsApp is not configured.",
+      success: customerSent || ownerSent,
+      customerSent,
+      ownerSent,
+      details: errors.length
+        ? errors.join("; ")
+        : "Customer and owner WhatsApp notifications sent successfully via Cloud API.",
     };
   } catch (error) {
     console.error(

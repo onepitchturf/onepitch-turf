@@ -5,7 +5,7 @@ Turf booking site: Next.js 15 (App Router) + React 19 + TypeScript (strict), Sup
 ## Commands
 - `npm run dev` / `npm run build` / `npm start`
 - `npm run lint` is `next lint` and is **broken** (eslint is not installed and there is no config) — do not rely on it. Typecheck instead: `npx tsc --noEmit`.
-- No tests exist; don't invent a test framework.
+- Module unit tests: `npm run test:whatsapp` validates customer and owner notification payloads against Meta's approved schema.
 
 ## Architecture / booking flow
 - UI (`BookingModal.tsx`) → `POST /api/razorpay/create-order` (re-checks availability, holds slots via RPC, creates Razorpay order) → Razorpay checkout → `POST /api/razorpay/verify-payment` (server-side HMAC signature check, confirms booking via RPC). `holdToken` ties the whole flow together.
@@ -18,19 +18,33 @@ Turf booking site: Next.js 15 (App Router) + React 19 + TypeScript (strict), Sup
 
 ## Env & secrets
 - Copy `.env.example` → `.env.local`. Use the Supabase **anon/publishable** key as `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY` — never a service_role key. Razorpay needs `NEXT_PUBLIC_RAZORPAY_KEY_ID` + `RAZORPAY_KEY_SECRET` (server-side only).
-- WhatsApp messaging uses Meta's official WhatsApp Business Cloud API with the approved template **`turf_slot_booking_alert`** (11 body parameters):
-  - `{{1}}` Customer Name (e.g. `Mohamed Arief`)
-  - `{{2}}` Booking Ref (e.g. `TRF-CF92BF08`)
-  - `{{3}}` Venue Location (e.g. `OnePitch Turf, Perambalur`)
-  - `{{4}}` Court Name & Subtitle (e.g. `Full Turf — Entire Turf (C1 + C2)`)
-  - `{{5}}` Sport (e.g. `Football`)
-  - `{{6}}` Formatted Date (e.g. `Sunday, September 6, 2026`)
-  - `{{7}}` Time Slot (e.g. `10:00 PM – 01:00 AM`)
-  - `{{8}}` Duration (e.g. `3 Hours` / `1 Hour`)
-  - `{{9}}` Total Amount in INR (e.g. `4,500`)
-  - `{{10}}` Payment Method (e.g. `UPI`)
-  - `{{11}}` Payment ID (e.g. `pay_TYLQbdRcsePvPN`)
-  - `src/lib/whatsappService.ts` (`sendDualWhatsAppNotifications`) is the core engine, supporting both env var naming styles (`WHATSAPP_TOKEN` / `WHATSAPP_CLOUD_ACCESS_TOKEN`, `WHATSAPP_PHONE_NUMBER_ID` / `WHATSAPP_CLOUD_PHONE_NUMBER_ID`, `WHATSAPP_TEMPLATE_CUSTOMER` / `WHATSAPP_TEMPLATE_OWNER` defaulting to `turf_slot_booking_alert`).
+- WhatsApp messaging uses Meta's official WhatsApp Business Cloud API with two approved templates (`en` language):
+  - **`turf_booking_owner_notify`** (13 body parameters):
+    - `{{1}}` Customer Name (e.g. `Mohamed Arief`)
+    - `{{2}}` Customer Phone (e.g. `+919688689556`)
+    - `{{3}}` Booking Ref (e.g. `TRF-985BBE38`)
+    - `{{4}}` Court Name (e.g. `Full turf`)
+    - `{{5}}` Formatted Date (e.g. `Sat, 19 Sept, 2026`)
+    - `{{6}}` Time Slot (e.g. `09:00 PM - 11:00 PM`)
+    - `{{7}}` Sport (e.g. `Cricket`)
+    - `{{8}}` Team Name (e.g. `Not provided`)
+    - `{{9}}` Paid / Advance Amount in INR (e.g. `300`)
+    - `{{10}}` Payment Status (e.g. `Advance via UPI` / `Paid via UPI`)
+    - `{{11}}` Payment ID (e.g. `pay_Tdo4ZD9HYAuJPA`)
+    - `{{12}}` Order ID (e.g. `order_Tdo4QUBFNj0BoX`)
+    - `{{13}}` Balance Due in INR (e.g. `700`)
+  - **`turf_booking_customer_notify`** (10 body parameters):
+    - `{{1}}` Customer Name (e.g. `Mohamed Arief`)
+    - `{{2}}` Booking Ref (e.g. `TRF-CF92BF08`)
+    - `{{3}}` Court Name & Subtitle (e.g. `Full Turf — Entire Turf (C1 + C2)`)
+    - `{{4}}` Sport (e.g. `Football`)
+    - `{{5}}` Formatted Date (e.g. `Sunday, September 6, 2026`)
+    - `{{6}}` Time Slot (e.g. `10:00 PM – 01:00 AM`)
+    - `{{7}}` Paid / Advance Amount in INR (e.g. `300`)
+    - `{{8}}` Payment ID (e.g. `pay_TYLQbdRcsePvPN`)
+    - `{{9}}` Payment Type (e.g. `Advance` / `Paid`)
+    - `{{10}}` Balance Due in INR (e.g. `700`)
+  - `src/lib/whatsappService.ts` (`sendDualWhatsAppNotifications`) is the core engine, supporting both env var naming styles (`WHATSAPP_TOKEN` / `WHATSAPP_CLOUD_ACCESS_TOKEN`, `WHATSAPP_PHONE_NUMBER_ID` / `WHATSAPP_CLOUD_PHONE_NUMBER_ID`, `WHATSAPP_TEMPLATE_CUSTOMER` defaulting to `turf_booking_customer_notify`, `WHATSAPP_TEMPLATE_OWNER` defaulting to `turf_booking_owner_notify`, and `WHATSAPP_TEMPLATE_LANG` defaulting to `en`).
   - Includes a 60-second in-memory deduplication cache per booking reference to guarantee customer and owner never receive duplicate messages across concurrent or retry triggers.
   - `src/lib/whatsappService.ts` (`sendDualWhatsAppNotifications`) is the sole engine, replacing all legacy duplicate files.
 - All notification senders are intentionally never-throwing: a broken email/WhatsApp config must never fail or delay a paid booking (see `Promise.allSettled` in `bookingService.ts`, `email.ts`, `whatsappService.ts`). Preserve this invariant.
